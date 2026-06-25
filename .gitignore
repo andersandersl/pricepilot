@@ -25,6 +25,10 @@ api/.env
 .wrangler/
 .dev.vars
 
+# Build output
+.output/
+.vercel/output/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
