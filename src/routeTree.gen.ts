@@ -13,6 +13,7 @@ import { Route as StrategiesRouteImport } from './routes/strategies'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ProductsRouteImport } from './routes/products'
 import { Route as PricingRouteImport } from './routes/pricing'
+import { Route as LogoutRouteImport } from './routes/logout'
 import { Route as ExclusionsRouteImport } from './routes/exclusions'
 import { Route as ConnectionsRouteImport } from './routes/connections'
 import { Route as IndexRouteImport } from './routes/index'
@@ -37,6 +38,11 @@ const PricingRoute = PricingRouteImport.update({
   path: '/pricing',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LogoutRoute = LogoutRouteImport.update({
+  id: '/logout',
+  path: '/logout',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ExclusionsRoute = ExclusionsRouteImport.update({
   id: '/exclusions',
   path: '/exclusions',
@@ -57,6 +63,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/connections': typeof ConnectionsRoute
   '/exclusions': typeof ExclusionsRoute
+  '/logout': typeof LogoutRoute
   '/pricing': typeof PricingRoute
   '/products': typeof ProductsRoute
   '/settings': typeof SettingsRoute
@@ -66,6 +73,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/connections': typeof ConnectionsRoute
   '/exclusions': typeof ExclusionsRoute
+  '/logout': typeof LogoutRoute
   '/pricing': typeof PricingRoute
   '/products': typeof ProductsRoute
   '/settings': typeof SettingsRoute
@@ -76,6 +84,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/connections': typeof ConnectionsRoute
   '/exclusions': typeof ExclusionsRoute
+  '/logout': typeof LogoutRoute
   '/pricing': typeof PricingRoute
   '/products': typeof ProductsRoute
   '/settings': typeof SettingsRoute
@@ -87,6 +96,7 @@ export interface FileRouteTypes {
     | '/'
     | '/connections'
     | '/exclusions'
+    | '/logout'
     | '/pricing'
     | '/products'
     | '/settings'
@@ -96,6 +106,7 @@ export interface FileRouteTypes {
     | '/'
     | '/connections'
     | '/exclusions'
+    | '/logout'
     | '/pricing'
     | '/products'
     | '/settings'
@@ -105,6 +116,7 @@ export interface FileRouteTypes {
     | '/'
     | '/connections'
     | '/exclusions'
+    | '/logout'
     | '/pricing'
     | '/products'
     | '/settings'
@@ -115,6 +127,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ConnectionsRoute: typeof ConnectionsRoute
   ExclusionsRoute: typeof ExclusionsRoute
+  LogoutRoute: typeof LogoutRoute
   PricingRoute: typeof PricingRoute
   ProductsRoute: typeof ProductsRoute
   SettingsRoute: typeof SettingsRoute
@@ -151,6 +164,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PricingRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/logout': {
+      id: '/logout'
+      path: '/logout'
+      fullPath: '/logout'
+      preLoaderRoute: typeof LogoutRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/exclusions': {
       id: '/exclusions'
       path: '/exclusions'
@@ -179,6 +199,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ConnectionsRoute: ConnectionsRoute,
   ExclusionsRoute: ExclusionsRoute,
+  LogoutRoute: LogoutRoute,
   PricingRoute: PricingRoute,
   ProductsRoute: ProductsRoute,
   SettingsRoute: SettingsRoute,

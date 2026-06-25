@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
-import { Check } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Check, ChevronDown, ChevronRight } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/ui-bits";
+import { readSavedShopConnection, saveShopConnection } from "@/lib/shop-connection";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({ meta: [{ title: "Settings — PricePilot" }] }),
@@ -10,11 +11,24 @@ export const Route = createFileRoute("/settings")({
 });
 
 const platforms = ["WooCommerce", "Shopify", "Centra", "Magento", "BigCommerce"] as const;
+const EU_CURRENCIES = [
+  { code: "EUR", label: "Euro" },
+  { code: "BGN", label: "Bulgarian lev" },
+  { code: "CZK", label: "Czech koruna" },
+  { code: "DKK", label: "Danish krone" },
+  { code: "HUF", label: "Hungarian forint" },
+  { code: "PLN", label: "Polish zloty" },
+  { code: "RON", label: "Romanian leu" },
+  { code: "SEK", label: "Swedish krona" },
+] as const;
 
-const defaultConnectedShops = [
-  { name: "nordic-outdoor.myshopify.com", platform: "Shopify", connected: true, lastSync: "2 min ago" },
-  { name: "fjell-sport.centra.com", platform: "Centra", connected: true, lastSync: "14 min ago" },
-];
+type ConnectedShop = {
+  name: string;
+  platform: string;
+  currencyCode: string;
+  connected: boolean;
+  lastSync: string;
+};
 
 type WooConnectionInput = {
   storeUrl: string;
@@ -71,6 +85,28 @@ const testWooCommerceConnection = createServerFn({ method: "POST" })
       payload = null;
     }
 
+    if ((response.status === 401 || response.status === 403) && endpoint.includes("?")) {
+      // Some hosts/proxies strip Authorization headers; Woo also supports key/secret in query.
+      const fallbackUrl = `${endpoint}&consumer_key=${encodeURIComponent(data.consumerKey)}&consumer_secret=${encodeURIComponent(data.consumerSecret)}`;
+      try {
+        response = await fetch(fallbackUrl, {
+          headers: {
+            Accept: "application/json",
+            "User-Agent": "PricePilot-Connection-Test",
+          },
+        });
+
+        const fallbackBody = await response.text();
+        try {
+          payload = fallbackBody ? JSON.parse(fallbackBody) : null;
+        } catch {
+          payload = null;
+        }
+      } catch {
+        throw new Error("Could not reach WooCommerce API endpoint during fallback validation.");
+      }
+    }
+
     if (!response.ok) {
       const message =
         typeof payload === "object" &&
@@ -79,6 +115,13 @@ const testWooCommerceConnection = createServerFn({ method: "POST" })
         typeof (payload as { message?: unknown }).message === "string"
           ? (payload as { message: string }).message
           : `Connection failed (${response.status}).`;
+
+      if (/cannot list resources|forbidden|permission/i.test(message)) {
+        throw new Error(
+          "WooCommerce rejected access. Ensure the REST API key is created in WooCommerce > Settings > Advanced > REST API with Read/Write permissions and attached to an admin or shop manager user.",
+        );
+      }
+
       throw new Error(message);
     }
 
@@ -101,15 +144,53 @@ type TestState =
 
 function SettingsPage() {
   const [platform, setPlatform] = useState<(typeof platforms)[number]>("WooCommerce");
+  const [isShopConnectionOpen, setIsShopConnectionOpen] = useState(false);
   const [testState, setTestState] = useState<TestState>({ status: "idle" });
-  const [connectedShops, setConnectedShops] = useState(defaultConnectedShops);
+  const [connectedShop, setConnectedShop] = useState<ConnectedShop | null>(null);
+  const [savedCurrencyCode, setSavedCurrencyCode] = useState<string | null>(null);
   const [wooConnection, setWooConnection] = useState({
     storeUrl: "",
     apiVersion: "wc/v3",
+    currencyCode: "DKK",
     consumerKey: "",
     consumerSecret: "",
     webhookSecret: "",
   });
+
+  useEffect(() => {
+    const saved = readSavedShopConnection();
+    if (!saved) return;
+
+    setPlatform(saved.platform);
+    setConnectedShop({
+      name: saved.storeUrl.replace(/^https?:\/\//, ""),
+      platform: saved.platform,
+      currencyCode: saved.currencyCode,
+      connected: true,
+      lastSync: "active",
+    });
+    setSavedCurrencyCode(saved.currencyCode);
+    setWooConnection({
+      storeUrl: saved.storeUrl,
+      apiVersion: saved.apiVersion,
+      currencyCode: saved.currencyCode,
+      consumerKey: saved.consumerKey,
+      consumerSecret: saved.consumerSecret,
+      webhookSecret: saved.webhookSecret ?? "",
+    });
+  }, []);
+
+  function confirmCurrencyChange(): boolean {
+    if (!savedCurrencyCode || savedCurrencyCode === wooConnection.currencyCode) return true;
+
+    const first = window.confirm(
+      `You are changing store currency from ${savedCurrencyCode} to ${wooConnection.currencyCode}. This affects pricing and sync behavior. Continue?`,
+    );
+    if (!first) return false;
+
+    const typed = window.prompt(`Type ${wooConnection.currencyCode} to confirm currency change.`);
+    return (typed ?? "").trim().toUpperCase() === wooConnection.currencyCode;
+  }
 
   const platformHint = useMemo(() => {
     if (platform === "WooCommerce") {
@@ -127,6 +208,11 @@ function SettingsPage() {
     setTestState({ status: "loading" });
 
     try {
+      if (!confirmCurrencyChange()) {
+        setTestState({ status: "error", message: "Currency change cancelled. No changes were saved." });
+        return;
+      }
+
       const result = await testWooCommerceConnection({
         data: {
           storeUrl: wooConnection.storeUrl,
@@ -137,10 +223,30 @@ function SettingsPage() {
       });
 
       const productInfo = result.sampleProductName ? ` Sample product: ${result.sampleProductName}.` : "";
+      saveShopConnection({
+        platform: "WooCommerce",
+        storeUrl: result.normalizedStoreUrl,
+        apiVersion: result.apiVersion,
+        currencyCode: wooConnection.currencyCode,
+        consumerKey: wooConnection.consumerKey,
+        consumerSecret: wooConnection.consumerSecret,
+        webhookSecret: wooConnection.webhookSecret || undefined,
+        connectedAt: new Date().toISOString(),
+      });
+
+      setConnectedShop({
+        name: result.normalizedStoreUrl.replace(/^https?:\/\//, ""),
+        platform: "WooCommerce",
+        currencyCode: wooConnection.currencyCode,
+        connected: true,
+        lastSync: "active",
+      });
+      setSavedCurrencyCode(wooConnection.currencyCode);
+
       setTestState({
         status: "success",
         testedStore: result.normalizedStoreUrl,
-        message: `Connection verified against ${result.apiVersion}.${productInfo}`,
+        message: `Connection verified and saved against ${result.apiVersion}.${productInfo}`,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Connection test failed.";
@@ -154,17 +260,35 @@ function SettingsPage() {
       return;
     }
 
+    if (!confirmCurrencyChange()) {
+      setTestState({ status: "error", message: "Currency change cancelled. No changes were saved." });
+      return;
+    }
+
     const normalizedName = testState.testedStore.replace(/^https?:\/\//, "");
 
-    setConnectedShops((prev) => {
-      if (prev.some((shop) => shop.name === normalizedName)) return prev;
-      return [
-        { name: normalizedName, platform: "WooCommerce", connected: true, lastSync: "just now" },
-        ...prev,
-      ];
+    setConnectedShop({
+      name: normalizedName,
+      platform: "WooCommerce",
+      currencyCode: wooConnection.currencyCode,
+      connected: true,
+      lastSync: "just now",
+    });
+    setSavedCurrencyCode(wooConnection.currencyCode);
+
+    saveShopConnection({
+      platform: "WooCommerce",
+      storeUrl: testState.testedStore,
+      apiVersion: normalizeApiVersion(wooConnection.apiVersion),
+      currencyCode: wooConnection.currencyCode,
+      consumerKey: wooConnection.consumerKey,
+      consumerSecret: wooConnection.consumerSecret,
+      webhookSecret: wooConnection.webhookSecret || undefined,
+      connectedAt: new Date().toISOString(),
     });
 
     setTestState({ status: "success", testedStore: testState.testedStore, message: "Connection saved and sync enabled." });
+    setIsShopConnectionOpen(false);
   }
 
   return (
@@ -172,116 +296,151 @@ function SettingsPage() {
       <PageHeader title="Settings" subtitle="Configure workspace defaults and connect your e-commerce platform" />
       <div className="p-6 space-y-6 max-w-4xl">
         <section className="space-y-2">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Shop connections</h2>
-          <div className="rounded-lg border border-hairline bg-surface p-5 space-y-4">
-            <div>
-              <label htmlFor="platform" className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Platform
-              </label>
-              <select
-                id="platform"
-                value={platform}
-                onChange={(e) => setPlatform(e.target.value as (typeof platforms)[number])}
-                className="mt-1 h-10 w-full rounded-md border border-hairline bg-background px-3 text-sm outline-none focus:border-foreground/40"
-              >
-                {platforms.map((p) => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-              </select>
-              <p className="mt-2 text-[11px] text-muted-foreground">{platformHint}</p>
-            </div>
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Shop connection</h2>
+          <div className="rounded-lg border border-hairline bg-surface">
+            <button
+              type="button"
+              onClick={() => setIsShopConnectionOpen((v) => !v)}
+              className="w-full flex items-center justify-between p-4 hover:bg-foreground/5"
+            >
+              <div>
+                <div className="text-sm font-medium text-left">Shop connection</div>
+                <div className="text-[11px] text-muted-foreground mt-0.5 text-left">Connect one platform account to this workspace</div>
+              </div>
+              {isShopConnectionOpen ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+            </button>
 
-            {platform === "WooCommerce" && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <label className="space-y-1">
-                  <span className="text-[11px] font-medium text-muted-foreground">Store URL</span>
-                  <input
-                    placeholder="https://your-test-shop.com"
-                    value={wooConnection.storeUrl}
-                    onChange={(e) => setWooConnection((prev) => ({ ...prev, storeUrl: e.target.value }))}
-                    className="h-10 w-full rounded-md border border-hairline bg-background px-3 text-sm outline-none focus:border-foreground/40"
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className="text-[11px] font-medium text-muted-foreground">API version</span>
-                  <input
-                    value={wooConnection.apiVersion}
-                    onChange={(e) => setWooConnection((prev) => ({ ...prev, apiVersion: e.target.value }))}
-                    className="h-10 w-full rounded-md border border-hairline bg-background px-3 text-sm outline-none focus:border-foreground/40"
-                  />
-                </label>
-                <label className="space-y-1 md:col-span-2">
-                  <span className="text-[11px] font-medium text-muted-foreground">Consumer key</span>
-                  <input
-                    placeholder="ck_..."
-                    value={wooConnection.consumerKey}
-                    onChange={(e) => setWooConnection((prev) => ({ ...prev, consumerKey: e.target.value }))}
-                    className="h-10 w-full rounded-md border border-hairline bg-background px-3 text-sm outline-none focus:border-foreground/40"
-                  />
-                </label>
-                <label className="space-y-1 md:col-span-2">
-                  <span className="text-[11px] font-medium text-muted-foreground">Consumer secret</span>
-                  <input
-                    type="password"
-                    placeholder="cs_..."
-                    value={wooConnection.consumerSecret}
-                    onChange={(e) => setWooConnection((prev) => ({ ...prev, consumerSecret: e.target.value }))}
-                    className="h-10 w-full rounded-md border border-hairline bg-background px-3 text-sm outline-none focus:border-foreground/40"
-                  />
-                </label>
-                <label className="space-y-1 md:col-span-2">
-                  <span className="text-[11px] font-medium text-muted-foreground">Webhook secret (optional)</span>
-                  <input
-                    placeholder="Optional, used for secure webhook validation"
-                    value={wooConnection.webhookSecret}
-                    onChange={(e) => setWooConnection((prev) => ({ ...prev, webhookSecret: e.target.value }))}
-                    className="h-10 w-full rounded-md border border-hairline bg-background px-3 text-sm outline-none focus:border-foreground/40"
-                  />
-                </label>
+            {isShopConnectionOpen && (
+              <div className="px-5 pb-5 space-y-4 border-t border-hairline">
+                <div className="pt-4">
+                  <label htmlFor="platform" className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Platform
+                  </label>
+                  <select
+                    id="platform"
+                    value={platform}
+                    onChange={(e) => setPlatform(e.target.value as (typeof platforms)[number])}
+                    className="mt-1 h-10 w-full rounded-md border border-hairline bg-background px-3 text-sm outline-none focus:border-foreground/40"
+                  >
+                    {platforms.map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+                  <p className="mt-2 text-[11px] text-muted-foreground">{platformHint}</p>
+                </div>
+
+                {platform === "WooCommerce" && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <label className="space-y-1">
+                      <span className="text-[11px] font-medium text-muted-foreground">Store URL</span>
+                      <input
+                        placeholder="https://your-test-shop.com"
+                        value={wooConnection.storeUrl}
+                        onChange={(e) => setWooConnection((prev) => ({ ...prev, storeUrl: e.target.value }))}
+                        className="h-10 w-full rounded-md border border-hairline bg-background px-3 text-sm outline-none focus:border-foreground/40"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[11px] font-medium text-muted-foreground">API version</span>
+                      <input
+                        value={wooConnection.apiVersion}
+                        onChange={(e) => setWooConnection((prev) => ({ ...prev, apiVersion: e.target.value }))}
+                        className="h-10 w-full rounded-md border border-hairline bg-background px-3 text-sm outline-none focus:border-foreground/40"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[11px] font-medium text-muted-foreground">Store currency (EU)</span>
+                      <select
+                        value={wooConnection.currencyCode}
+                        onChange={(e) => setWooConnection((prev) => ({ ...prev, currencyCode: e.target.value }))}
+                        className="h-10 w-full rounded-md border border-hairline bg-background px-3 text-sm outline-none focus:border-foreground/40"
+                      >
+                        {EU_CURRENCIES.map((currency) => (
+                          <option key={currency.code} value={currency.code}>{currency.code} · {currency.label}</option>
+                        ))}
+                      </select>
+                      <p className="text-[10px] text-muted-foreground">
+                        Changing currency after first save requires double confirmation.
+                      </p>
+                    </label>
+                    <label className="space-y-1 md:col-span-2">
+                      <span className="text-[11px] font-medium text-muted-foreground">Consumer key</span>
+                      <input
+                        placeholder="ck_..."
+                        value={wooConnection.consumerKey}
+                        onChange={(e) => setWooConnection((prev) => ({ ...prev, consumerKey: e.target.value }))}
+                        className="h-10 w-full rounded-md border border-hairline bg-background px-3 text-sm outline-none focus:border-foreground/40"
+                      />
+                    </label>
+                    <label className="space-y-1 md:col-span-2">
+                      <span className="text-[11px] font-medium text-muted-foreground">Consumer secret</span>
+                      <input
+                        type="password"
+                        placeholder="cs_..."
+                        value={wooConnection.consumerSecret}
+                        onChange={(e) => setWooConnection((prev) => ({ ...prev, consumerSecret: e.target.value }))}
+                        className="h-10 w-full rounded-md border border-hairline bg-background px-3 text-sm outline-none focus:border-foreground/40"
+                      />
+                    </label>
+                    <label className="space-y-1 md:col-span-2">
+                      <span className="text-[11px] font-medium text-muted-foreground">Webhook secret (optional)</span>
+                      <input
+                        placeholder="Optional, used for secure webhook validation"
+                        value={wooConnection.webhookSecret}
+                        onChange={(e) => setWooConnection((prev) => ({ ...prev, webhookSecret: e.target.value }))}
+                        className="h-10 w-full rounded-md border border-hairline bg-background px-3 text-sm outline-none focus:border-foreground/40"
+                      />
+                    </label>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={handleTestConnection}
+                    disabled={testState.status === "loading"}
+                    className="inline-flex items-center rounded-md bg-foreground text-background px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-60"
+                  >
+                    {testState.status === "loading" ? "Testing..." : "Test connection"}
+                  </button>
+                  <button
+                    onClick={handleSaveConnection}
+                    className="inline-flex items-center rounded-md border border-hairline px-4 py-2 text-sm hover:bg-foreground/5"
+                  >
+                    Save and enable sync
+                  </button>
+                  <span className="text-[11px] text-muted-foreground">Credentials are stored locally in this browser for prototype syncing.</span>
+                </div>
+
+                {testState.status === "error" && <p className="text-[12px] text-negative">{testState.message}</p>}
+                {testState.status === "success" && <p className="text-[12px] text-positive">{testState.message}</p>}
               </div>
             )}
-
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={handleTestConnection}
-                disabled={testState.status === "loading"}
-                className="inline-flex items-center rounded-md bg-foreground text-background px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-60"
-              >
-                {testState.status === "loading" ? "Testing..." : "Test connection"}
-              </button>
-              <button
-                onClick={handleSaveConnection}
-                className="inline-flex items-center rounded-md border border-hairline px-4 py-2 text-sm hover:bg-foreground/5"
-              >
-                Save and enable sync
-              </button>
-              <span className="text-[11px] text-muted-foreground">Credentials are sent only during validation and are not persisted yet.</span>
-            </div>
-
-            {testState.status === "error" && <p className="text-[12px] text-negative">{testState.message}</p>}
-            {testState.status === "success" && <p className="text-[12px] text-positive">{testState.message}</p>}
           </div>
         </section>
 
         <section className="space-y-2">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Connected shops</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {connectedShops.map((shop) => (
-              <div key={shop.name} className="rounded-lg border border-hairline bg-surface p-4">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Connected shop</h2>
+          <div className="grid grid-cols-1 gap-3">
+            {connectedShop ? (
+              <div className="rounded-lg border border-hairline bg-surface p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="text-sm font-semibold truncate">{shop.name}</div>
-                    <div className="text-[11px] text-muted-foreground">{shop.platform}</div>
+                    <div className="text-sm font-semibold truncate">{connectedShop.name}</div>
+                    <div className="text-[11px] text-muted-foreground">{connectedShop.platform} · {connectedShop.currencyCode}</div>
                   </div>
-                  {shop.connected && (
+                  {connectedShop.connected && (
                     <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider text-positive font-medium">
                       <Check className="h-3 w-3" /> Connected
                     </span>
                   )}
                 </div>
-                <div className="mt-3 text-[11px] text-muted-foreground">Last sync: {shop.lastSync}</div>
+                <div className="mt-3 text-[11px] text-muted-foreground">Last sync: {connectedShop.lastSync}</div>
               </div>
-            ))}
+            ) : (
+              <div className="rounded-lg border border-hairline bg-surface p-4 text-[12px] text-muted-foreground">
+                No shop connected yet.
+              </div>
+            )}
           </div>
         </section>
 

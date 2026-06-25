@@ -27,7 +27,7 @@ function ExclusionsPage() {
 
   // State
   const [excludedEans, setExcludedEans] = useState<{ ean: string; name: string; reason: string }[]>([
-    { ean: "5712341001234", name: "Helly Hansen Crew Jacket", reason: "Discontinued SKU" },
+    { ean: "5712341001234", name: "Helly Hansen Crew Jacket", reason: "Discontinued EAN" },
     { ean: "5712341001891", name: "Fjällräven Kånken 16L", reason: "Vendor-controlled MAP" },
   ]);
   const [excludedComps, setExcludedComps] = useState<Set<string>>(new Set(["c3"]));
@@ -44,7 +44,7 @@ function ExclusionsPage() {
     <div>
       <PageHeader
         title="Exclusions"
-        subtitle="Carve-outs for products, competitors, brands and individual SKUs that should bypass the normal pricing rules."
+        subtitle="Carve-outs for products, competitors, brands and individual EANs that should bypass the normal pricing rules."
       />
 
       <div className="grid grid-cols-[220px_1fr]">
@@ -116,7 +116,7 @@ function EansPanel({ rows, onAdd, onRemove }: {
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Search by EAN, SKU or product name…"
+              placeholder="Search by EAN or product name…"
               className="h-9 w-full rounded-md border border-hairline bg-background pl-8 pr-3 text-xs outline-none focus:border-foreground/30"
             />
             {matches.length > 0 && (
@@ -179,7 +179,7 @@ function CompetitorsPanel({ excluded, onToggle }: { excluded: Set<string>; onTog
             />
             <div className="min-w-0 flex-1">
               <div className={cn("text-xs font-medium", off && "line-through text-muted-foreground")}>{c.name}</div>
-              <div className="text-[10px] text-muted-foreground num">{c.market} · {c.skus} SKUs tracked · {Math.round(c.coverage * 100)}% coverage</div>
+              <div className="text-[10px] text-muted-foreground num">{c.market} · {c.skus} EANs tracked · {Math.round(c.coverage * 100)}% coverage</div>
             </div>
             {off && <span className="text-[10px] uppercase tracking-wider text-negative">Ignored</span>}
           </label>
@@ -263,7 +263,7 @@ function ManualPanel({ rows, onAdd, onRemove }: {
     <>
       <Card title="Set manual price by EAN">
         <div className="grid grid-cols-[1fr_140px_160px_auto] gap-2">
-          <input value={ean} onChange={(e) => setEan(e.target.value)} placeholder="EAN or SKU (try NO-1005)" className="h-9 rounded-md border border-hairline bg-background px-3 text-xs num outline-none focus:border-foreground/30" />
+          <input value={ean} onChange={(e) => setEan(e.target.value)} placeholder="EAN (try NO-1005)" className="h-9 rounded-md border border-hairline bg-background px-3 text-xs num outline-none focus:border-foreground/30" />
           <input value={price} onChange={(e) => setPrice(e.target.value)} placeholder="Price (DKK)" className="h-9 rounded-md border border-hairline bg-background px-3 text-xs num outline-none focus:border-foreground/30" />
           <input type="date" value={until} onChange={(e) => setUntil(e.target.value)} className="h-9 rounded-md border border-hairline bg-background px-3 text-xs outline-none focus:border-foreground/30" />
           <button

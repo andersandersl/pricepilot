@@ -1,14 +1,14 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Activity, Package, Sliders, Settings, Search, ChevronDown, Bell, Ban } from "lucide-react";
+import { Activity, Sliders, Settings, Search, Ban, LogOut } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 const nav = [
   { to: "/", label: "Recent changes", icon: Activity, exact: true },
-  { to: "/products", label: "Products", icon: Package },
   { to: "/strategies", label: "Strategies", icon: Sliders },
   { to: "/exclusions", label: "Exclusions", icon: Ban },
   { to: "/settings", label: "Settings", icon: Settings },
+  { to: "/logout", label: "Logout", icon: LogOut },
 ];
 
 const CREDITS_USED = 1247;
@@ -59,25 +59,12 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <div className="flex-1 flex min-w-0 flex-col">
         <header className="flex h-16 shrink-0 items-center gap-2 px-5 pt-4">
-          <div className="flex items-center gap-1.5 rounded-full bg-surface border border-hairline p-1 pr-2">
-            <button className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs hover:bg-foreground/5">
-              <span className="h-1.5 w-1.5 rounded-full bg-positive" />
-              <span className="font-medium">nordic-outdoor.myshopify.com</span>
-              <ChevronDown className="h-3 w-3 text-muted-foreground" />
-            </button>
-            <span className="h-4 w-px bg-hairline" />
-            <button className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs hover:bg-foreground/5">
-              <span className="font-mono text-[10px] font-semibold">DK</span>
-              <ChevronDown className="h-3 w-3 text-muted-foreground" />
-            </button>
-          </div>
           <div className="relative flex-1 max-w-md">
             <Search className="pointer-events-none absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <input
-              placeholder="Search SKU, product, competitor…"
-              className="h-9 w-full rounded-full border border-hairline bg-surface pl-9 pr-12 text-xs outline-none focus:border-foreground/40"
+              placeholder="Search EAN, product, competitor…"
+              className="h-9 w-full rounded-full border border-hairline bg-surface pl-9 pr-3 text-xs outline-none focus:border-foreground/40"
             />
-            <kbd className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md border border-hairline bg-muted px-1.5 text-[10px] text-muted-foreground font-mono">⌘K</kbd>
           </div>
           <Link
             to="/pricing"
@@ -98,10 +85,6 @@ export function AppShell({ children }: { children: ReactNode }) {
               />
             </div>
           </Link>
-          <button className="grid h-9 w-9 place-items-center rounded-full border border-hairline bg-surface hover:bg-foreground/5">
-            <Bell className="h-4 w-4 text-muted-foreground" />
-          </button>
-          <div className="grid h-9 w-9 place-items-center rounded-full bg-foreground text-background text-[11px] font-semibold">EM</div>
         </header>
 
         <main className="flex-1 min-w-0 overflow-auto">
