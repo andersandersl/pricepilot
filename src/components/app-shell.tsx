@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Activity, Package, Sliders, Plug, Settings, Search, ChevronDown, Bell, Ban } from "lucide-react";
+import { Activity, Package, Sliders, Settings, Search, ChevronDown, Bell, Ban } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
@@ -8,7 +8,6 @@ const nav = [
   { to: "/products", label: "Products", icon: Package },
   { to: "/strategies", label: "Strategies", icon: Sliders },
   { to: "/exclusions", label: "Exclusions", icon: Ban },
-  { to: "/connections", label: "Connections", icon: Plug },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
