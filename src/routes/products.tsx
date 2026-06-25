@@ -3,6 +3,7 @@ import { useMemo, useState, useRef, useEffect } from "react";
 import { Download, X, Check, ChevronDown } from "lucide-react";
 import { PageHeader, StatusPill, Delta } from "@/components/ui-bits";
 import { products as ALL_PRODUCTS, strategies, fmt, type Product } from "@/lib/mock-data";
+import { fetchWooProducts } from "@/lib/backend-api";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/products")({
@@ -18,20 +19,100 @@ function brandOf(name: string) {
   return name.split(" ")[0];
 }
 
+function seeded(seed: number) {
+  return () => {
+    seed = (seed * 9301 + 49297) % 233280;
+    return seed / 233280;
+  };
+}
+
+function toDisplayProduct(index: number, source: {
+  id: number;
+  sku: string;
+  ean: string;
+  name: string;
+  categories: string[];
+  brand: string;
+  price: number | null;
+  stockStatus: string;
+}): Product {
+  const r = seeded(source.id || index + 1000);
+  const current = source.price && source.price > 0 ? source.price : Math.round((350 + r() * 1500) / 10) * 10;
+  const cost = Math.max(1, Math.round(current * (0.62 + r() * 0.15)));
+  const compAvg = Math.max(1, Math.round(current * (0.98 + r() * 0.08)));
+  const compMin = Math.max(1, Math.round(compAvg * (0.9 + r() * 0.05)));
+  const compMax = Math.max(compAvg, Math.round(compAvg * (1.06 + r() * 0.08)));
+  const recommended = Math.max(compMin, Math.round((cost / 0.8) * 100) / 100);
+  const competitorNames = ["Proshop", "Elgiganten", "Power", "Komplett", "NetOnNet"];
+
+  return {
+    id: `woo_${source.id}`,
+    sku: source.sku || source.ean || `SKU-${source.id}`,
+    name: source.name,
+    category: source.categories?.[0] || source.brand || "General",
+    cost,
+    current,
+    recommended,
+    compMin,
+    compAvg,
+    compMax,
+    strategyId: strategies[index % strategies.length]?.id || strategies[0].id,
+    status: source.stockStatus?.toLowerCase().includes("out") ? "excluded" : "synced",
+    market: "DK",
+    history: Array.from({ length: 30 }, (_, k) => Math.round(current * (0.95 + Math.sin(k / 4 + index) * 0.03 + r() * 0.02))),
+    competitorPrices: competitorNames.map((competitor) => ({
+      competitor,
+      price: Math.max(1, Math.round(compAvg * (0.92 + r() * 0.16))),
+    })),
+  };
+}
+
 function ProductsPage() {
+  const [liveProducts, setLiveProducts] = useState<Product[] | null>(null);
+  const [sourceLabel, setSourceLabel] = useState<string | null>(null);
+  const [liveError, setLiveError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        const response = await fetchWooProducts();
+        if (cancelled) return;
+        const mapped = response.products.map((item, idx) => toDisplayProduct(idx, item));
+        setLiveProducts(mapped);
+        setSourceLabel(response.source);
+        setLiveError(null);
+      } catch (error) {
+        if (cancelled) return;
+        setLiveProducts(null);
+        setSourceLabel(null);
+        setLiveError(error instanceof Error ? error.message : "Failed to load products from legacy API.");
+      }
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const productsData = liveProducts && liveProducts.length > 0 ? liveProducts : ALL_PRODUCTS;
+
   const allBrands = useMemo(
-    () => Array.from(new Set(ALL_PRODUCTS.map((p) => brandOf(p.name)))).sort(),
-    [],
+    () => Array.from(new Set(productsData.map((p) => brandOf(p.name)))).sort(),
+    [productsData],
   );
   const allCategories = useMemo(
-    () => Array.from(new Set(ALL_PRODUCTS.map((p) => p.category))).sort(),
-    [],
+    () => Array.from(new Set(productsData.map((p) => p.category))).sort(),
+    [productsData],
   );
 
   const priceBounds = useMemo(() => {
-    const prices = ALL_PRODUCTS.map((p) => p.current);
+    const prices = productsData.map((p) => p.current);
     return { min: Math.floor(Math.min(...prices)), max: Math.ceil(Math.max(...prices)) };
-  }, []);
+  }, [productsData]);
 
   const [brands, setBrands] = useState<Set<string>>(new Set());
   const [cats, setCats] = useState<Set<string>>(new Set());
@@ -47,16 +128,16 @@ function ProductsPage() {
   const maxNum = priceMax === "" ? null : Number(priceMax);
 
   const filtered = useMemo(() => {
-    return ALL_PRODUCTS.filter((p) => {
+    return productsData.filter((p) => {
       if (brands.size && !brands.has(brandOf(p.name))) return false;
       if (cats.size && !cats.has(p.category)) return false;
       if (minNum !== null && !Number.isNaN(minNum) && p.current < minNum) return false;
       if (maxNum !== null && !Number.isNaN(maxNum) && p.current > maxNum) return false;
       return true;
     });
-  }, [brands, cats, minNum, maxNum]);
+  }, [brands, cats, minNum, maxNum, productsData]);
 
-  const detail = ALL_PRODUCTS.find((p) => p.id === detailId);
+  const detail = productsData.find((p) => p.id === detailId);
   const allVisibleSelected = filtered.length > 0 && filtered.every((p) => selected.has(p.id));
   const stratFor = (p: Product) => overrides[p.id] ?? p.strategyId;
 
@@ -89,7 +170,7 @@ function ProductsPage() {
     <div>
       <PageHeader
         title="Products"
-        subtitle={`${filtered.length} of ${ALL_PRODUCTS.length} SKUs · 5 competitors tracked`}
+        subtitle={`${filtered.length} of ${productsData.length} SKUs · 5 competitors tracked${sourceLabel ? ` · source ${sourceLabel}` : ""}`}
         actions={
           <>
             {selected.size > 0 && (
@@ -106,6 +187,12 @@ function ProductsPage() {
           </>
         }
       />
+
+      {liveError && (
+        <div className="mx-6 mt-3 rounded-md border border-hairline bg-surface px-3 py-2 text-[11px] text-muted-foreground">
+          Live backend unavailable, showing prototype data. {liveError}
+        </div>
+      )}
 
       <div className="flex items-center gap-2 px-6 py-3 border-b border-hairline text-xs flex-wrap">
         <span className="text-[10px] uppercase tracking-wider text-muted-foreground mr-1">Filters</span>
