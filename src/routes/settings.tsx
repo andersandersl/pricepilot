@@ -30,6 +30,13 @@ type ConnectedShop = {
   lastSync: string;
 };
 
+type ProfileSettings = {
+  euVatNumber: string;
+  email: string;
+  userName: string;
+  companyName: string;
+};
+
 type WooConnectionInput = {
   storeUrl: string;
   apiVersion: string;
@@ -142,7 +149,32 @@ type TestState =
   | { status: "success"; message: string; testedStore: string }
   | { status: "error"; message: string };
 
+type SettingsTab = "shop" | "connected" | "profile" | "team" | "notifications" | "billing";
+
+function isSettingsTab(value: string | null): value is SettingsTab {
+  return (
+    value === "shop"
+    || value === "connected"
+    || value === "profile"
+    || value === "team"
+    || value === "notifications"
+    || value === "billing"
+  );
+}
+
+const SETTINGS_DETAIL: Record<Exclude<SettingsTab, "shop" | "connected">, { title: string; desc: string }> = {
+  profile: { title: "Profile", desc: "Your name, email, and avatar" },
+  team: { title: "Team", desc: "Invite analysts, manage roles" },
+  notifications: { title: "Notifications", desc: "Daily digest, competitor alerts, sync errors" },
+  billing: { title: "Billing", desc: "Plan, usage, invoices" },
+};
+
+const PROFILE_SETTINGS_KEY = "pricepilot.profile-settings.v1";
+
 function SettingsPage() {
+  const search = Route.useSearch() as Record<string, unknown>;
+  const rawTab = typeof search.tab === "string" ? search.tab : null;
+  const tab: SettingsTab = isSettingsTab(rawTab) ? rawTab : "shop";
   const [platform, setPlatform] = useState<(typeof platforms)[number]>("WooCommerce");
   const [isShopConnectionOpen, setIsShopConnectionOpen] = useState(false);
   const [testState, setTestState] = useState<TestState>({ status: "idle" });
@@ -156,6 +188,13 @@ function SettingsPage() {
     consumerSecret: "",
     webhookSecret: "",
   });
+  const [profileSettings, setProfileSettings] = useState<ProfileSettings>({
+    euVatNumber: "",
+    email: "",
+    userName: "",
+    companyName: "",
+  });
+  const [profileSaveMessage, setProfileSaveMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const saved = readSavedShopConnection();
@@ -178,6 +217,26 @@ function SettingsPage() {
       consumerSecret: saved.consumerSecret,
       webhookSecret: saved.webhookSecret ?? "",
     });
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    try {
+      const raw = window.localStorage.getItem(PROFILE_SETTINGS_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (!parsed || typeof parsed !== "object") return;
+
+      const obj = parsed as Partial<ProfileSettings>;
+      setProfileSettings({
+        euVatNumber: typeof obj.euVatNumber === "string" ? obj.euVatNumber : "",
+        email: typeof obj.email === "string" ? obj.email : "",
+        userName: typeof obj.userName === "string" ? obj.userName : "",
+        companyName: typeof obj.companyName === "string" ? obj.companyName : "",
+      });
+    } catch {
+      // Ignore malformed local data and keep defaults.
+    }
   }, []);
 
   function confirmCurrencyChange(): boolean {
@@ -291,10 +350,26 @@ function SettingsPage() {
     setIsShopConnectionOpen(false);
   }
 
+  function handleSaveProfile() {
+    if (typeof window === "undefined") return;
+
+    const trimmed = {
+      euVatNumber: profileSettings.euVatNumber.trim(),
+      email: profileSettings.email.trim(),
+      userName: profileSettings.userName.trim(),
+      companyName: profileSettings.companyName.trim(),
+    };
+
+    window.localStorage.setItem(PROFILE_SETTINGS_KEY, JSON.stringify(trimmed));
+    setProfileSettings(trimmed);
+    setProfileSaveMessage("Profile saved.");
+  }
+
   return (
     <div>
       <PageHeader title="Settings" subtitle="Configure workspace defaults and connect your e-commerce platform" />
       <div className="p-6 space-y-6 max-w-4xl">
+        {tab === "shop" && (
         <section className="space-y-2">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Shop connection</h2>
           <div className="rounded-lg border border-hairline bg-surface">
@@ -417,7 +492,9 @@ function SettingsPage() {
             )}
           </div>
         </section>
+        )}
 
+        {tab === "connected" && (
         <section className="space-y-2">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Connected shop</h2>
           <div className="grid grid-cols-1 gap-3">
@@ -443,25 +520,98 @@ function SettingsPage() {
             )}
           </div>
         </section>
+        )}
 
+        {tab === "profile" && (
         <section className="space-y-2">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">General</h2>
-          {[
-            { title: "Profile", desc: "Your name, email, and avatar" },
-            { title: "Team", desc: "Invite analysts, manage roles" },
-            { title: "Notifications", desc: "Daily digest, competitor alerts, sync errors" },
-            { title: "Billing", desc: "Plan, usage, invoices" },
-            { title: "API tokens", desc: "Programmatic access to PricePilot" },
-          ].map((s) => (
-            <div key={s.title} className="flex items-center justify-between rounded-lg border border-hairline bg-surface p-4 hover:border-foreground/30 cursor-pointer">
+          <div className="rounded-lg border border-hairline bg-surface p-4 space-y-4">
             <div>
-              <div className="text-sm font-medium">{s.title}</div>
-              <div className="text-[11px] text-muted-foreground mt-0.5">{s.desc}</div>
+              <div className="text-sm font-medium">Profile</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">Manage your VAT and contact identity used across workspace settings.</div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <label className="space-y-1 md:col-span-2">
+                <span className="text-[11px] font-medium text-muted-foreground">Company name</span>
+                <input
+                  placeholder="Nordic Retail ApS"
+                  value={profileSettings.companyName}
+                  onChange={(e) => {
+                    setProfileSaveMessage(null);
+                    setProfileSettings((prev) => ({ ...prev, companyName: e.target.value }));
+                  }}
+                  className="h-10 w-full rounded-md border border-hairline bg-background px-3 text-sm outline-none focus:border-foreground/40"
+                />
+              </label>
+
+              <label className="space-y-1">
+                <span className="text-[11px] font-medium text-muted-foreground">User name</span>
+                <input
+                  placeholder="Anders Andersen"
+                  value={profileSettings.userName}
+                  onChange={(e) => {
+                    setProfileSaveMessage(null);
+                    setProfileSettings((prev) => ({ ...prev, userName: e.target.value }));
+                  }}
+                  className="h-10 w-full rounded-md border border-hairline bg-background px-3 text-sm outline-none focus:border-foreground/40"
+                />
+              </label>
+
+              <label className="space-y-1">
+                <span className="text-[11px] font-medium text-muted-foreground">Email</span>
+                <input
+                  type="email"
+                  placeholder="name@company.com"
+                  value={profileSettings.email}
+                  onChange={(e) => {
+                    setProfileSaveMessage(null);
+                    setProfileSettings((prev) => ({ ...prev, email: e.target.value }));
+                  }}
+                  className="h-10 w-full rounded-md border border-hairline bg-background px-3 text-sm outline-none focus:border-foreground/40"
+                />
+              </label>
+
+              <label className="space-y-1 md:col-span-2">
+                <span className="text-[11px] font-medium text-muted-foreground">EU VAT number</span>
+                <input
+                  placeholder="DK12345678"
+                  value={profileSettings.euVatNumber}
+                  onChange={(e) => {
+                    setProfileSaveMessage(null);
+                    setProfileSettings((prev) => ({ ...prev, euVatNumber: e.target.value.toUpperCase() }));
+                  }}
+                  className="h-10 w-full rounded-md border border-hairline bg-background px-3 text-sm outline-none focus:border-foreground/40"
+                />
+              </label>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleSaveProfile}
+                className="inline-flex items-center rounded-md bg-foreground text-background px-4 py-2 text-sm font-medium hover:opacity-90"
+              >
+                Save profile
+              </button>
+              {profileSaveMessage && <span className="text-[12px] text-positive">{profileSaveMessage}</span>}
+            </div>
+          </div>
+        </section>
+        )}
+
+        {tab !== "shop" && tab !== "connected" && tab !== "profile" && (
+        <section className="space-y-2">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">General</h2>
+            <div className="flex items-center justify-between rounded-lg border border-hairline bg-surface p-4">
+            <div>
+              <div className="text-sm font-medium">{SETTINGS_DETAIL[tab].title}</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">{SETTINGS_DETAIL[tab].desc}</div>
             </div>
             <span className="text-xs text-muted-foreground">→</span>
           </div>
-          ))}
         </section>
+        )}
       </div>
     </div>
   );

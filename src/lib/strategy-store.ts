@@ -37,8 +37,8 @@ export function getDefaultStrategySettings(): StrategySettings {
   };
 }
 
-export function describeStrategySettings(settings: StrategySettings): string {
-  const roundingLabel = settings.rounding === "none" ? "no rounding" : `round to ${settings.rounding} DKK`;
+export function describeStrategySettings(settings: StrategySettings, currencyCode = "DKK"): string {
+  const roundingLabel = settings.rounding === "none" ? "no rounding" : `round to ${settings.rounding} ${currencyCode}`;
 
   if (settings.basis === "average") {
     return `Match market average, min margin ${settings.minMarginPct}%, max ${settings.maxStepChangePct}% step, ${roundingLabel}.`;

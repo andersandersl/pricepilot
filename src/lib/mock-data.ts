@@ -1,4 +1,6 @@
 // Mock data for PricePilot prototype
+import { getSavedCurrencyCode } from "@/lib/shop-connection";
+
 export type Market = "DK" | "SE" | "NO" | "FI";
 export type Status = "synced" | "pending" | "excluded";
 
@@ -128,7 +130,7 @@ export const competitorActivity = [
 export const kpis = [
   { label: "Price changes today", value: "247", delta: "+18%", series: [12, 14, 11, 18, 22, 19, 26, 24, 28, 31, 27, 33] },
   { label: "Avg margin", value: "31.4%", delta: "+0.6pp", series: [30, 30, 31, 30, 31, 31, 32, 31, 32, 31, 31, 32] },
-  { label: "Revenue impact 7d", value: "+ 184k DKK", delta: "+12.3%", series: [10, 14, 13, 18, 22, 24, 28, 31, 34, 38, 42, 46] },
+  { label: "Revenue impact 7d", value: "+ 184k", delta: "+12.3%", series: [10, 14, 13, 18, 22, 24, 28, 31, 34, 38, 42, 46] },
   { label: "Competitor moves 24h", value: "1,284", delta: "-4%", series: [60, 58, 56, 54, 52, 50, 48, 50, 48, 46, 44, 42] },
 ];
 
@@ -138,6 +140,6 @@ export const priceIndex30d = Array.from({ length: 30 }, (_, i) => ({
   market: 100 + Math.sin(i / 5 + 1) * 2.2 + i * 0.08,
 }));
 
-export function fmt(n: number, currency = "DKK") {
+export function fmt(n: number, currency = getSavedCurrencyCode()) {
   return `${n.toLocaleString("da-DK")} ${currency}`;
 }

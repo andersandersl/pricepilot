@@ -35,6 +35,7 @@ type LiveWooInput = {
   apiVersion: string;
   consumerKey: string;
   consumerSecret: string;
+  maxPages?: number;
 };
 
 type PriceRunnerQuote = {
@@ -91,97 +92,130 @@ type LiveWooProduct = {
   costDkk?: number | null;
 };
 
+type LiveProductsCacheEntry = {
+  key: string;
+  timestampMs: number;
+  products: Product[];
+  sourceLabel: string | null;
+  modifiedMap: Record<string, number>;
+  nonSyncableIds: string[];
+};
+
+const LIVE_PRODUCTS_CACHE_TTL_MS = 90 * 1000;
+const WOO_PRODUCTS_PER_PAGE = 100;
+const WOO_PRODUCTS_MAX_PAGES = 20;
+const WOO_PRODUCTS_INITIAL_RECENT_MAX_PAGES = 3;
+let liveProductsCache: LiveProductsCacheEntry | null = null;
+
+function toConnectionKey(connection: LiveWooInput): string {
+  return `${connection.storeUrl}|${connection.apiVersion}`;
+}
+
 const fetchConnectedWooProducts = createServerFn({ method: "POST" })
   .validator((input: LiveWooInput) => input)
   .handler(async ({ data }) => {
-    const endpoint = `${data.storeUrl}/wp-json/${data.apiVersion}/products?per_page=100`;
     const authToken = Buffer.from(`${data.consumerKey}:${data.consumerSecret}`, "utf-8").toString("base64");
+    const maxPages = Math.max(1, Math.min(WOO_PRODUCTS_MAX_PAGES, data.maxPages ?? WOO_PRODUCTS_MAX_PAGES));
+    const allProducts: LiveWooProduct[] = [];
 
-    let response = await fetch(endpoint, {
-      headers: {
-        Authorization: `Basic ${authToken}`,
-        Accept: "application/json",
-        "User-Agent": "PricePilot-Live-Sync",
-      },
-    });
+    for (let page = 1; page <= maxPages; page += 1) {
+      const endpoint = `${data.storeUrl}/wp-json/${data.apiVersion}/products?per_page=${WOO_PRODUCTS_PER_PAGE}&page=${page}`;
 
-    let rawBody = await response.text();
-    let payload: unknown = null;
-    try {
-      payload = rawBody ? JSON.parse(rawBody) : null;
-    } catch {
-      payload = null;
-    }
-
-    if ((response.status === 401 || response.status === 403) && endpoint.includes("?")) {
-      const fallbackUrl = `${endpoint}&consumer_key=${encodeURIComponent(data.consumerKey)}&consumer_secret=${encodeURIComponent(data.consumerSecret)}`;
-      response = await fetch(fallbackUrl, {
+      let response = await fetch(endpoint, {
         headers: {
+          Authorization: `Basic ${authToken}`,
           Accept: "application/json",
           "User-Agent": "PricePilot-Live-Sync",
         },
       });
 
-      rawBody = await response.text();
+      let rawBody = await response.text();
+      let payload: unknown = null;
       try {
         payload = rawBody ? JSON.parse(rawBody) : null;
       } catch {
         payload = null;
       }
+
+      if ((response.status === 401 || response.status === 403) && endpoint.includes("?")) {
+        const fallbackUrl = `${endpoint}&consumer_key=${encodeURIComponent(data.consumerKey)}&consumer_secret=${encodeURIComponent(data.consumerSecret)}`;
+        response = await fetch(fallbackUrl, {
+          headers: {
+            Accept: "application/json",
+            "User-Agent": "PricePilot-Live-Sync",
+          },
+        });
+
+        rawBody = await response.text();
+        try {
+          payload = rawBody ? JSON.parse(rawBody) : null;
+        } catch {
+          payload = null;
+        }
+      }
+
+      if (!response.ok) {
+        const message =
+          typeof payload === "object" &&
+          payload &&
+          "message" in payload &&
+          typeof (payload as { message?: unknown }).message === "string"
+            ? (payload as { message: string }).message
+            : `Live sync failed (${response.status}) on page ${page}.`;
+        throw new Error(message);
+      }
+
+      const pageProducts = Array.isArray(payload)
+        ? payload
+            .filter((item) => typeof item === "object" && item !== null)
+            .map((item) => {
+              const obj = item as Record<string, unknown>;
+              const categories = Array.isArray(obj.categories)
+                ? obj.categories
+                    .filter((c) => typeof c === "object" && c !== null)
+                    .map((c) => (c as Record<string, unknown>).name)
+                    .filter((name): name is string => typeof name === "string")
+                : [];
+
+              const name = typeof obj.name === "string" ? obj.name : "Unnamed product";
+              const numericPrice =
+                typeof obj.price === "string" && obj.price.trim() !== ""
+                  ? Number(obj.price)
+                  : typeof obj.price === "number"
+                    ? obj.price
+                    : null;
+
+              return {
+                id: Number(obj.id) || 0,
+                name,
+                ean: typeof obj.sku === "string" ? obj.sku : "",
+                sku: typeof obj.sku === "string" ? obj.sku : "",
+                permalink: typeof obj.permalink === "string" ? obj.permalink : "",
+                price: numericPrice !== null && Number.isFinite(numericPrice) ? numericPrice : null,
+                type: typeof obj.type === "string" ? obj.type : "",
+                stockStatus: typeof obj.stock_status === "string" ? obj.stock_status : "instock",
+                categories,
+                brand: name.split(" ")[0] ?? "",
+                modifiedAtMs:
+                  typeof obj.date_modified_gmt === "string" && !Number.isNaN(Date.parse(obj.date_modified_gmt))
+                    ? Date.parse(obj.date_modified_gmt)
+                    : typeof obj.date_modified === "string" && !Number.isNaN(Date.parse(obj.date_modified))
+                      ? Date.parse(obj.date_modified)
+                      : null,
+              } satisfies LiveWooProduct;
+            })
+            .filter((p) => p.id > 0)
+        : [];
+
+      allProducts.push(...pageProducts);
+
+      const totalPagesHeader = Number(response.headers.get("x-wp-totalpages") || "");
+      const knownTotalPages = Number.isFinite(totalPagesHeader) && totalPagesHeader > 0 ? totalPagesHeader : null;
+      const reachedLastPage = (knownTotalPages !== null && page >= knownTotalPages) || pageProducts.length < WOO_PRODUCTS_PER_PAGE;
+      if (reachedLastPage) break;
     }
 
-    if (!response.ok) {
-      const message =
-        typeof payload === "object" &&
-        payload &&
-        "message" in payload &&
-        typeof (payload as { message?: unknown }).message === "string"
-          ? (payload as { message: string }).message
-          : `Live sync failed (${response.status}).`;
-      throw new Error(message);
-    }
-
-    const products = Array.isArray(payload)
-      ? payload
-          .filter((item) => typeof item === "object" && item !== null)
-          .map((item) => {
-            const obj = item as Record<string, unknown>;
-            const categories = Array.isArray(obj.categories)
-              ? obj.categories
-                  .filter((c) => typeof c === "object" && c !== null)
-                  .map((c) => (c as Record<string, unknown>).name)
-                  .filter((name): name is string => typeof name === "string")
-              : [];
-
-            const name = typeof obj.name === "string" ? obj.name : "Unnamed product";
-            const numericPrice =
-              typeof obj.price === "string" && obj.price.trim() !== ""
-                ? Number(obj.price)
-                : typeof obj.price === "number"
-                  ? obj.price
-                  : null;
-
-            return {
-              id: Number(obj.id) || 0,
-              name,
-              ean: typeof obj.sku === "string" ? obj.sku : "",
-              sku: typeof obj.sku === "string" ? obj.sku : "",
-              permalink: typeof obj.permalink === "string" ? obj.permalink : "",
-              price: numericPrice !== null && Number.isFinite(numericPrice) ? numericPrice : null,
-              type: typeof obj.type === "string" ? obj.type : "",
-              stockStatus: typeof obj.stock_status === "string" ? obj.stock_status : "instock",
-              categories,
-              brand: name.split(" ")[0] ?? "",
-              modifiedAtMs:
-                typeof obj.date_modified_gmt === "string" && !Number.isNaN(Date.parse(obj.date_modified_gmt))
-                  ? Date.parse(obj.date_modified_gmt)
-                  : typeof obj.date_modified === "string" && !Number.isNaN(Date.parse(obj.date_modified))
-                    ? Date.parse(obj.date_modified)
-                    : null,
-            } satisfies LiveWooProduct;
-          })
-          .filter((p) => p.id > 0)
-      : [];
+    const products = Array.from(new Map(allProducts.map((product) => [product.id, product])).values());
 
     return {
       source: data.storeUrl,
@@ -469,12 +503,30 @@ export function ProductsPage({ mode = "products" }: { mode?: "products" | "recen
 
       try {
         setHasShopConnection(true);
+        const cacheKey = toConnectionKey({
+          storeUrl: connection.storeUrl,
+          apiVersion: connection.apiVersion,
+          consumerKey: connection.consumerKey,
+          consumerSecret: connection.consumerSecret,
+        });
+
+        if (liveProductsCache && liveProductsCache.key === cacheKey && (Date.now() - liveProductsCache.timestampMs) < LIVE_PRODUCTS_CACHE_TTL_MS) {
+          setLiveProducts(liveProductsCache.products);
+          setWooModifiedAtByProductId(liveProductsCache.modifiedMap);
+          setNonSyncableProductIds(new Set(liveProductsCache.nonSyncableIds));
+          setSourceLabel(liveProductsCache.sourceLabel);
+          setLiveError(null);
+          setIsLiveLoading(false);
+          return;
+        }
+
         const response = await fetchConnectedWooProducts({
           data: {
             storeUrl: connection.storeUrl,
             apiVersion: connection.apiVersion,
             consumerKey: connection.consumerKey,
             consumerSecret: connection.consumerSecret,
+            maxPages: mode === "recent" ? WOO_PRODUCTS_INITIAL_RECENT_MAX_PAGES : WOO_PRODUCTS_MAX_PAGES,
           },
         });
         if (cancelled) return;
@@ -497,6 +549,14 @@ export function ProductsPage({ mode = "products" }: { mode?: "products" | "recen
         setNonSyncableProductIds(nonSyncable);
         setSourceLabel(response.source);
         setLiveError(null);
+        liveProductsCache = {
+          key: cacheKey,
+          timestampMs: Date.now(),
+          products: mapped,
+          sourceLabel: response.source,
+          modifiedMap,
+          nonSyncableIds: [...nonSyncable],
+        };
       } catch (error) {
         if (cancelled) return;
         setLiveProducts([]);
@@ -868,7 +928,7 @@ export function ProductsPage({ mode = "products" }: { mode?: "products" | "recen
     <div>
       <PageHeader
         title={mode === "recent" ? "Recent changes" : "Products"}
-        subtitle={`${filteredByDate.length} of ${filtered.length} EANs · 5 competitors tracked${sourceLabel ? ` · source ${sourceLabel}` : ""}`}
+        subtitle={`${filteredByDate.length} of ${filtered.length} EANs${sourceLabel ? ` · source ${sourceLabel}` : ""}`}
         actions={
           <>
             {selected.size > 0 && (

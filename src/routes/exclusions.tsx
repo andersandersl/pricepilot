@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Plus, X, Search, Package, Radar, Sliders, Tag } from "lucide-react";
 import { PageHeader } from "@/components/ui-bits";
-import { products as ALL_PRODUCTS, competitors, fmt } from "@/lib/mock-data";
+import { products as ALL_PRODUCTS, fmt } from "@/lib/mock-data";
+import { getSavedCurrencyCode } from "@/lib/shop-connection";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/exclusions")({
@@ -11,6 +12,10 @@ export const Route = createFileRoute("/exclusions")({
 });
 
 type Tab = "eans" | "competitors" | "rules" | "manual";
+
+function isTab(value: string | null): value is Tab {
+  return value === "eans" || value === "competitors" || value === "rules" || value === "manual";
+}
 
 const TABS: { id: Tab; label: string; icon: typeof Package; hint: string }[] = [
   { id: "eans", label: "Excluded EANs", icon: Package, hint: "Products that should never receive automatic price updates." },
@@ -21,22 +26,68 @@ const TABS: { id: Tab; label: string; icon: typeof Package; hint: string }[] = [
 
 const allBrands = Array.from(new Set(ALL_PRODUCTS.map((p) => p.name.split(" ")[0]))).sort();
 const allCats = Array.from(new Set(ALL_PRODUCTS.map((p) => p.category))).sort();
+const DISCOVERED_SUPPLIERS_KEY = "pricepilot.discovered-suppliers.v1";
+const EXCLUDED_SUPPLIERS_KEY = "pricepilot.excluded-suppliers.v1";
 
 function ExclusionsPage() {
-  const [tab, setTab] = useState<Tab>("eans");
+  const search = Route.useSearch() as Record<string, unknown>;
+  const rawTab = typeof search.tab === "string" ? search.tab : null;
+  const tab: Tab = isTab(rawTab) ? rawTab : "eans";
+  const [currencyCode, setCurrencyCode] = useState("DKK");
+
+  useEffect(() => {
+    setCurrencyCode(getSavedCurrencyCode());
+  }, []);
 
   // State
   const [excludedEans, setExcludedEans] = useState<{ ean: string; name: string; reason: string }[]>([
     { ean: "5712341001234", name: "Helly Hansen Crew Jacket", reason: "Discontinued EAN" },
     { ean: "5712341001891", name: "Fjällräven Kånken 16L", reason: "Vendor-controlled MAP" },
   ]);
-  const [excludedComps, setExcludedComps] = useState<Set<string>>(new Set(["c3"]));
+  const [discoveredSuppliers, setDiscoveredSuppliers] = useState<string[]>([]);
+  const [excludedComps, setExcludedComps] = useState<Set<string>>(new Set());
   const [overrides, setOverrides] = useState<{ id: string; type: "brand" | "category"; value: string; note: string }[]>([
     { id: "o1", type: "brand", value: "Devold", note: "Negotiated supplier agreement" },
   ]);
   const [manualPrices, setManualPrices] = useState<{ ean: string; name: string; price: number; until: string }[]>([
     { ean: "5712341002001", name: "Norrøna Falketind Pants", price: 2199, until: "2026-07-31" },
   ]);
+
+  useEffect(() => {
+    const loadSuppliers = () => {
+      if (typeof window === "undefined") return;
+
+      try {
+        const rawDiscovered = window.localStorage.getItem(DISCOVERED_SUPPLIERS_KEY);
+        const parsedDiscovered = rawDiscovered ? JSON.parse(rawDiscovered) : [];
+        const discovered = Array.isArray(parsedDiscovered)
+          ? parsedDiscovered.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+          : [];
+        setDiscoveredSuppliers(discovered);
+      } catch {
+        setDiscoveredSuppliers([]);
+      }
+
+      try {
+        const rawExcluded = window.localStorage.getItem(EXCLUDED_SUPPLIERS_KEY);
+        const parsedExcluded = rawExcluded ? JSON.parse(rawExcluded) : [];
+        const excluded = Array.isArray(parsedExcluded)
+          ? parsedExcluded.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+          : [];
+        setExcludedComps(new Set(excluded));
+      } catch {
+        setExcludedComps(new Set());
+      }
+    };
+
+    loadSuppliers();
+    window.addEventListener("focus", loadSuppliers);
+    window.addEventListener("storage", loadSuppliers);
+    return () => {
+      window.removeEventListener("focus", loadSuppliers);
+      window.removeEventListener("storage", loadSuppliers);
+    };
+  }, []);
 
   const current = TABS.find((t) => t.id === tab)!;
 
@@ -47,27 +98,7 @@ function ExclusionsPage() {
         subtitle="Carve-outs for products, competitors, brands and individual EANs that should bypass the normal pricing rules."
       />
 
-      <div className="grid grid-cols-[220px_1fr]">
-        <aside className="border-r border-hairline px-2 py-4 min-h-[calc(100vh-8.5rem)]">
-          {TABS.map((t) => {
-            const Icon = t.icon;
-            const active = t.id === tab;
-            return (
-              <button
-                key={t.id}
-                onClick={() => setTab(t.id)}
-                className={cn(
-                  "w-full flex items-center gap-2.5 rounded-md px-2.5 py-2 text-xs text-left transition-colors",
-                  active ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-accent/60",
-                )}
-              >
-                <Icon className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">{t.label}</span>
-              </button>
-            );
-          })}
-        </aside>
-
+      <div>
         <section className="p-6 space-y-5 max-w-4xl">
           <div>
             <h2 className="text-sm font-semibold">{current.label}</h2>
@@ -78,13 +109,24 @@ function ExclusionsPage() {
             <EansPanel rows={excludedEans} onAdd={(r) => setExcludedEans((p) => [r, ...p])} onRemove={(ean) => setExcludedEans((p) => p.filter((r) => r.ean !== ean))} />
           )}
           {tab === "competitors" && (
-            <CompetitorsPanel excluded={excludedComps} onToggle={(id) => setExcludedComps((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; })} />
+            <CompetitorsPanel
+              suppliers={discoveredSuppliers}
+              excluded={excludedComps}
+              onToggle={(supplier) => {
+                setExcludedComps((prev) => {
+                  const next = new Set(prev);
+                  next.has(supplier) ? next.delete(supplier) : next.add(supplier);
+                  window.localStorage.setItem(EXCLUDED_SUPPLIERS_KEY, JSON.stringify([...next]));
+                  return next;
+                });
+              }}
+            />
           )}
           {tab === "rules" && (
             <RulesPanel rows={overrides} onAdd={(r) => setOverrides((p) => [r, ...p])} onRemove={(id) => setOverrides((p) => p.filter((r) => r.id !== id))} />
           )}
           {tab === "manual" && (
-            <ManualPanel rows={manualPrices} onAdd={(r) => setManualPrices((p) => [r, ...p])} onRemove={(ean) => setManualPrices((p) => p.filter((r) => r.ean !== ean))} />
+            <ManualPanel currencyCode={currencyCode} rows={manualPrices} onAdd={(r) => setManualPrices((p) => [r, ...p])} onRemove={(ean) => setManualPrices((p) => p.filter((r) => r.ean !== ean))} />
           )}
         </section>
       </div>
@@ -164,22 +206,30 @@ function EansPanel({ rows, onAdd, onRemove }: {
 }
 
 /* ---------------- Competitors ---------------- */
-function CompetitorsPanel({ excluded, onToggle }: { excluded: Set<string>; onToggle: (id: string) => void }) {
+function CompetitorsPanel({ suppliers, excluded, onToggle }: { suppliers: string[]; excluded: Set<string>; onToggle: (supplier: string) => void }) {
+  if (suppliers.length === 0) {
+    return (
+      <div className="rounded-md border border-hairline px-4 py-6 text-xs text-muted-foreground">
+        No competitors discovered yet. They appear here automatically after PriceRunner finds them.
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-md border border-hairline divide-y divide-hairline">
-      {competitors.map((c) => {
-        const off = excluded.has(c.id);
+      {suppliers.map((supplier) => {
+        const off = excluded.has(supplier);
         return (
-          <label key={c.id} className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-accent/40">
+          <label key={supplier} className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-accent/40">
             <input
               type="checkbox"
               checked={off}
-              onChange={() => onToggle(c.id)}
+              onChange={() => onToggle(supplier)}
               className="rounded border-hairline"
             />
             <div className="min-w-0 flex-1">
-              <div className={cn("text-xs font-medium", off && "line-through text-muted-foreground")}>{c.name}</div>
-              <div className="text-[10px] text-muted-foreground num">{c.market} · {c.skus} EANs tracked · {Math.round(c.coverage * 100)}% coverage</div>
+              <div className={cn("text-xs font-medium", off && "line-through text-muted-foreground")}>{supplier}</div>
+              <div className="text-[10px] text-muted-foreground">Discovered from PriceRunner</div>
             </div>
             {off && <span className="text-[10px] uppercase tracking-wider text-negative">Ignored</span>}
           </label>
@@ -244,7 +294,8 @@ function RulesPanel({ rows, onAdd, onRemove }: {
 }
 
 /* ---------------- Manual prices ---------------- */
-function ManualPanel({ rows, onAdd, onRemove }: {
+function ManualPanel({ currencyCode, rows, onAdd, onRemove }: {
+  currencyCode: string;
   rows: { ean: string; name: string; price: number; until: string }[];
   onAdd: (r: { ean: string; name: string; price: number; until: string }) => void;
   onRemove: (ean: string) => void;
@@ -264,7 +315,7 @@ function ManualPanel({ rows, onAdd, onRemove }: {
       <Card title="Set manual price by EAN">
         <div className="grid grid-cols-[1fr_140px_160px_auto] gap-2">
           <input value={ean} onChange={(e) => setEan(e.target.value)} placeholder="EAN (try NO-1005)" className="h-9 rounded-md border border-hairline bg-background px-3 text-xs num outline-none focus:border-foreground/30" />
-          <input value={price} onChange={(e) => setPrice(e.target.value)} placeholder="Price (DKK)" className="h-9 rounded-md border border-hairline bg-background px-3 text-xs num outline-none focus:border-foreground/30" />
+          <input value={price} onChange={(e) => setPrice(e.target.value)} placeholder={`Price (${currencyCode})`} className="h-9 rounded-md border border-hairline bg-background px-3 text-xs num outline-none focus:border-foreground/30" />
           <input type="date" value={until} onChange={(e) => setUntil(e.target.value)} className="h-9 rounded-md border border-hairline bg-background px-3 text-xs outline-none focus:border-foreground/30" />
           <button
             disabled={!match || !price}
@@ -276,7 +327,7 @@ function ManualPanel({ rows, onAdd, onRemove }: {
         </div>
         {ean.length >= 4 && (
           <div className="mt-2 text-[11px] text-muted-foreground">
-            {match ? <>Matches <span className="text-foreground font-medium">{match.name}</span> · current {fmt(match.current)}</> : <>No product found.</>}
+            {match ? <>Matches <span className="text-foreground font-medium">{match.name}</span> · current {fmt(match.current, currencyCode)}</> : <>No product found.</>}
           </div>
         )}
       </Card>
@@ -286,7 +337,7 @@ function ManualPanel({ rows, onAdd, onRemove }: {
           <tr key={r.ean} className="border-b border-hairline">
             <td className="px-3 py-2.5 num text-[11px] text-muted-foreground">{r.ean}</td>
             <td className="px-3 py-2.5 text-xs font-medium">{r.name}</td>
-            <td className="px-3 py-2.5 text-xs num">{fmt(r.price)}</td>
+            <td className="px-3 py-2.5 text-xs num">{fmt(r.price, currencyCode)}</td>
             <td className="px-3 py-2.5 text-xs text-muted-foreground">{r.until}</td>
             <td className="px-3 py-2.5 text-right">
               <button onClick={() => onRemove(r.ean)} className="text-muted-foreground hover:text-foreground"><X className="h-3.5 w-3.5" /></button>

@@ -3,19 +3,42 @@ import { Activity, Sliders, Settings, Search, Ban, LogOut } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
-const nav = [
+const workspaceNav = [
   { to: "/", label: "Recent changes", icon: Activity, exact: true },
-  { to: "/strategies", label: "Strategies", icon: Sliders },
-  { to: "/exclusions", label: "Exclusions", icon: Ban },
-  { to: "/settings", label: "Settings", icon: Settings },
-  { to: "/logout", label: "Logout", icon: LogOut },
-];
+] as const;
+
+const strategiesPrimaryNav = [
+  { to: "/strategies?tab=new", label: "New strategy" },
+  { to: "/strategies?tab=all", label: "Existing strategies" },
+] as const;
+
+const exclusionsNav = [
+  { to: "/exclusions?tab=eans", label: "Excluded EANs" },
+  { to: "/exclusions?tab=competitors", label: "Excluded competitors" },
+  { to: "/exclusions?tab=rules", label: "Brand & category overrides" },
+  { to: "/exclusions?tab=manual", label: "Manual prices" },
+] as const;
+
+const settingsNav = [
+  { to: "/settings?tab=shop", label: "Shop connection" },
+  { to: "/settings?tab=connected", label: "Connected shop" },
+  { to: "/settings?tab=profile", label: "Profile" },
+  { to: "/settings?tab=team", label: "Team" },
+  { to: "/settings?tab=notifications", label: "Notifications" },
+  { to: "/settings?tab=billing", label: "Billing" },
+] as const;
 
 const CREDITS_USED = 1247;
 const CREDITS_TOTAL = 3000;
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const search = useRouterState({ select: (s) => s.location.search });
+
+  const tab = typeof search?.tab === "string" ? search.tab : null;
+  const strategiesOpen = pathname.startsWith("/strategies");
+  const exclusionsOpen = pathname.startsWith("/exclusions");
+  const settingsOpen = pathname.startsWith("/settings");
 
   return (
     <div className="flex min-h-screen w-full bg-background text-foreground">
@@ -29,7 +52,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
         <nav className="flex-1 space-y-0.5">
           <div className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground font-mono">Workspace</div>
-          {nav.map((item) => {
+          {workspaceNav.map((item) => {
             const active = item.exact ? pathname === item.to : pathname.startsWith(item.to);
             const Icon = item.icon;
             return (
@@ -48,6 +71,115 @@ export function AppShell({ children }: { children: ReactNode }) {
               </Link>
             );
           })}
+
+          <div className="mt-1">
+            <Link
+              to="/strategies?tab=new"
+              className={cn(
+                "flex items-center gap-2.5 rounded-full px-3 py-2 text-sm transition-colors",
+                strategiesOpen ? "bg-foreground text-background font-semibold" : "text-foreground/70 hover:text-foreground hover:bg-foreground/5",
+              )}
+            >
+              <Sliders className="h-4 w-4 shrink-0" />
+              <span className="truncate">Strategies</span>
+            </Link>
+            {strategiesOpen && (
+              <div className="ml-8 mt-1 space-y-0.5">
+                {strategiesPrimaryNav.map((item) => {
+                  const active = item.to.includes("tab=") && tab ? item.to.endsWith(`tab=${tab}`) : false;
+                  return (
+                    <Link
+                      key={item.to}
+                      to={item.to}
+                      className={cn(
+                        "block rounded-md px-2 py-1.5 text-xs transition-colors",
+                        active ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-foreground/5",
+                      )}
+                    >
+                      {item.label}
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="mt-1">
+            <Link
+              to="/exclusions?tab=eans"
+              className={cn(
+                "flex items-center gap-2.5 rounded-full px-3 py-2 text-sm transition-colors",
+                exclusionsOpen ? "bg-foreground text-background font-semibold" : "text-foreground/70 hover:text-foreground hover:bg-foreground/5",
+              )}
+            >
+              <Ban className="h-4 w-4 shrink-0" />
+              <span className="truncate">Exclusions</span>
+            </Link>
+            {exclusionsOpen && (
+              <div className="ml-8 mt-1 space-y-0.5">
+                {exclusionsNav.map((item) => {
+                  const active = item.to.includes("tab=") && tab ? item.to.endsWith(`tab=${tab}`) : false;
+                  return (
+                    <Link
+                      key={item.to}
+                      to={item.to}
+                      className={cn(
+                        "block rounded-md px-2 py-1.5 text-xs transition-colors",
+                        active ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-foreground/5",
+                      )}
+                    >
+                      {item.label}
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="mt-1">
+            <Link
+              to="/settings?tab=shop"
+              className={cn(
+                "flex items-center gap-2.5 rounded-full px-3 py-2 text-sm transition-colors",
+                settingsOpen ? "bg-foreground text-background font-semibold" : "text-foreground/70 hover:text-foreground hover:bg-foreground/5",
+              )}
+            >
+              <Settings className="h-4 w-4 shrink-0" />
+              <span className="truncate">Settings</span>
+            </Link>
+            {settingsOpen && (
+              <div className="ml-8 mt-1 space-y-0.5">
+                {settingsNav.map((item) => {
+                  const active = item.to.includes("tab=") && tab ? item.to.endsWith(`tab=${tab}`) : false;
+                  return (
+                    <Link
+                      key={item.to}
+                      to={item.to}
+                      className={cn(
+                        "block rounded-md px-2 py-1.5 text-xs transition-colors",
+                        active ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-foreground/5",
+                      )}
+                    >
+                      {item.label}
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="mt-2">
+            <Link
+              to="/logout"
+              className={cn(
+                "flex items-center gap-2.5 rounded-full px-3 py-2 text-sm transition-colors",
+                pathname.startsWith("/logout") ? "bg-foreground text-background font-semibold" : "text-foreground/70 hover:text-foreground hover:bg-foreground/5",
+              )}
+            >
+              <LogOut className="h-4 w-4 shrink-0" />
+              <span className="truncate">Logout</span>
+            </Link>
+          </div>
         </nav>
         <div className="px-3 pt-3 text-[10px] text-muted-foreground font-mono">
           <div className="flex items-center justify-between">

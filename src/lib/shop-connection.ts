@@ -41,3 +41,8 @@ export function clearSavedShopConnection(): void {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(STORAGE_KEY);
 }
+
+export function getSavedCurrencyCode(): string {
+  const saved = readSavedShopConnection();
+  return saved?.currencyCode || "DKK";
+}
